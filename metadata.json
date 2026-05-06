@@ -1,0 +1,6 @@
+{
+  "name": "K-pop Fan event scraper",
+  "description": "A dashboard tracking K-Pop fansign events and album releases from major retailers like Ktown4u and Weverse, powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
