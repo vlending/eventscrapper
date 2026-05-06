@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { runScraper } from '../lib/scraper';
+// .js extension required for Node ESM resolution at runtime (Vercel).
+// TypeScript bundler mode accepts this and resolves to lib/scraper.ts.
+import { runScraper } from '../lib/scraper.js';
 
 export const config = {
   // Scraping with Google Search Grounding can take 20-40 seconds.

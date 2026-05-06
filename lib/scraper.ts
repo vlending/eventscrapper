@@ -2,7 +2,9 @@
 // It runs in Vercel Functions (production) and Vite dev middleware (local).
 
 import { GoogleGenAI } from "@google/genai";
-import type { KPopEvent } from "../types";
+// .js extension for Node ESM resolution at runtime (Vercel).
+// TypeScript bundler mode resolves this to ../types.ts.
+import type { KPopEvent } from "../types.js";
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
