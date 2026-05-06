@@ -284,7 +284,14 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
       return validated;
 
     } catch (error: any) {
-      console.error(`[scraper] Attempt ${attempt} failed:`, error?.message || error);
+      // Surface the full structure to server logs — Gemini errors are nested
+      console.error(`[scraper] Attempt ${attempt}/${maxAttempts} failed`);
+      console.error('  message:', error?.message);
+      console.error('  status :', error?.status || error?.code);
+      console.error('  body   :', error?.response?.data || error?.error || error);
+      try {
+        console.error('  stack  :', error?.stack);
+      } catch {}
       lastError = error;
       if (attempt < maxAttempts) {
         await delay(2000 * attempt);
@@ -292,5 +299,13 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
     }
   }
 
-  throw lastError || new Error("Failed to fetch events after multiple attempts.");
+  // Build a string error message even if Gemini returned a nested structure
+  const msg =
+    lastError?.message ||
+    lastError?.error?.message ||
+    (typeof lastError === 'string' ? lastError : null) ||
+    'Gemini scraper failed after all retry attempts';
+  const wrapped = new Error(msg);
+  (wrapped as any).cause = lastError;
+  throw wrapped;
 };

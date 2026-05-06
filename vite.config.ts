@@ -32,9 +32,14 @@ const scrapeApiPlugin = (geminiKey: string): Plugin => ({
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ events, page: pageNum, fetchedAt: new Date().toISOString() }));
       } catch (err: any) {
+        const msg = typeof err?.message === 'string'
+          ? err.message
+          : (typeof err === 'string' ? err : JSON.stringify(err));
+        console.error('[/api/scrape dev] failed:', msg);
+        if (err?.cause) console.error('  cause:', err.cause);
         res.statusCode = 502;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: err?.message || 'Scraper failed' }));
+        res.end(JSON.stringify({ error: msg }));
       }
     });
   },

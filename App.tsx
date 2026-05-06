@@ -94,8 +94,11 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Full fetch error:", err);
-      // Display the actual error message
-      setError(err.message || "An unexpected error occurred while fetching events.");
+      const msg =
+        typeof err?.message === 'string' ? err.message :
+        typeof err === 'string' ? err :
+        (() => { try { return JSON.stringify(err); } catch { return String(err); } })();
+      setError(msg || "An unexpected error occurred while fetching events.");
     } finally {
       setLoading(false);
     }

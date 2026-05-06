@@ -6,28 +6,49 @@ import type { KPopEvent } from "../types";
 
 interface ScrapeResponse {
   events?: KPopEvent[];
-  error?: string;
+  error?: unknown;
   page?: number;
   fetchedAt?: string;
 }
 
-export const fetchScrapedEvents = async (page: number = 1): Promise<KPopEvent[]> => {
-  const res = await fetch(`/api/scrape?page=${encodeURIComponent(String(page))}`, {
-    headers: { 'Accept': 'application/json' },
-  });
+const stringifyError = (e: unknown): string => {
+  if (e == null) return 'Unknown error';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'object') {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj.message === 'string') return obj.message;
+    if (typeof obj.error === 'string') return obj.error;
+    try { return JSON.stringify(e); } catch { return String(e); }
+  }
+  return String(e);
+};
 
-  let data: ScrapeResponse;
+export const fetchScrapedEvents = async (page: number = 1): Promise<KPopEvent[]> => {
+  const url = `/api/scrape?page=${encodeURIComponent(String(page))}`;
+  let res: Response;
   try {
-    data = await res.json();
+    res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  } catch (e) {
+    throw new Error(`Network error: ${stringifyError(e)}`);
+  }
+
+  let data: ScrapeResponse | null = null;
+  let rawText = '';
+  try {
+    rawText = await res.text();
+    data = rawText ? JSON.parse(rawText) : null;
   } catch {
-    throw new Error(`Server returned non-JSON response (HTTP ${res.status})`);
+    const preview = rawText.slice(0, 200);
+    throw new Error(`Non-JSON response (HTTP ${res.status}): ${preview || '(empty body)'}`);
   }
 
   if (!res.ok) {
-    throw new Error(data.error || `Server error (HTTP ${res.status})`);
+    const msg = data ? stringifyError(data.error) : `HTTP ${res.status}`;
+    throw new Error(msg);
   }
-  if (!data.events) {
-    throw new Error('Server response missing "events" field');
+  if (!data || !Array.isArray(data.events)) {
+    throw new Error(`Malformed response: ${rawText.slice(0, 200)}`);
   }
   return data.events;
 };
