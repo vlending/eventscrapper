@@ -1,100 +1,112 @@
-# 호스팅 가이드
+# 호스팅 가이드 (서버리스 함수 버전)
 
-## ⚠️ 보안 경고 — 먼저 읽으세요
+## ✅ 이 빌드의 보안 모델
 
-이 앱은 Gemini API 키를 **클라이언트 번들에 포함**시켜 빌드합니다
-([vite.config.ts](vite.config.ts) 의 `define: process.env.API_KEY`).
-공개 호스팅하면 누구나 브라우저 개발자도구 → Sources에서 키를 추출할 수 있습니다.
+이 프로젝트는 Gemini 호출을 **Vercel Serverless Function** ([api/scrape.ts](api/scrape.ts))으로 옮겨두었습니다.
 
-**호스팅 전 필수 조치 (둘 중 하나):**
+- 클라이언트 번들에는 Gemini 키도, Gemini SDK도 들어있지 않습니다.
+- 키는 Vercel 환경변수 `GEMINI_API_KEY`에서만 살아있고, Function 런타임 안에서만 읽힙니다.
+- 로컬 개발에서는 [vite.config.ts](vite.config.ts)의 dev 미들웨어가 같은 [lib/scraper.ts](lib/scraper.ts)를 호출하므로
+  `.env.local`의 키 또한 클라이언트 번들에는 박히지 않습니다.
 
-### A) 키에 HTTP 리퍼러 제한 걸기 (간편)
-1. [Google AI Studio API Keys](https://aistudio.google.com/app/apikey) 접속
-2. 사용 중인 키 클릭 → "Edit API key"
-3. **Application restrictions** → **HTTP referrers (web sites)** 선택
-4. 허용 리퍼러에 본인 배포 도메인 추가:
-   - 예) `https://your-app.vercel.app/*`
-   - 예) `https://your-app.netlify.app/*`
-5. 저장
-- 효과: 다른 사이트에서 키를 훔쳐도 호출이 거부됨
-- 한계: 키 자체는 여전히 공개
-
-### B) 서버리스 함수로 옮기기 (권장)
-Gemini 호출을 Vercel/Netlify Functions로 이동시켜 키를 서버에 두는 방법.
-별도 작업이 필요하므로 원하시면 코드 변경을 추가로 진행해드립니다.
+→ 따라서 **HTTP referrer 제한 같은 추가 조치는 선택 사항**입니다(중요도 낮음). 다만 키 도용 시 무료 한도 보호용으로 걸어두는 것은 여전히 권장.
 
 ---
 
-## 옵션 1. Vercel 배포 (권장 — 무료, 가장 쉬움)
+## 옵션 1. Vercel 배포 (권장)
 
-### CLI 없이 GitHub 연동으로 배포
-1. 이 폴더를 GitHub 저장소로 푸시
-2. https://vercel.com 가입 → "Add New Project" → GitHub 저장소 선택
-3. **Environment Variables** 에 `GEMINI_API_KEY = <발급받은 키>` 추가 (Production/Preview/Development 모두)
-4. Framework Preset: `Vite` 자동 인식됨
-5. **Deploy** 클릭 → 1분 내 `https://<프로젝트명>.vercel.app` 발급
-6. (위 보안조치 A 적용) 발급된 도메인을 Google API Key 리퍼러에 추가
+### A. GitHub + Vercel 웹 (가장 쉬움)
 
-### CLI로 배포 (선택)
+**1) GitHub 저장소 만들고 푸시**
+
+[github.com/new](https://github.com/new) 에서 새 저장소 생성 (예: `kpop-event-scraper`, **Private 권장**).
+
 ```cmd
-npm i -g vercel
 cd "C:\Users\pendo\Documents\Kpop event scrapper"
-vercel login
-vercel             # 첫 배포 (Preview)
-vercel --prod      # 프로덕션 배포
+git remote add origin https://github.com/<본인계정>/kpop-event-scraper.git
+git push -u origin main
 ```
-환경변수는 Vercel 웹 대시보드 또는 `vercel env add GEMINI_API_KEY` 로 등록.
 
----
+**2) Vercel 연동**
 
-## 옵션 2. Netlify 배포 (대안 — 무료)
+1. [vercel.com](https://vercel.com) 가입 → GitHub 로그인
+2. **Add New → Project** → 위에서 만든 저장소 선택 → **Import**
+3. Framework: **Vite** 자동 인식, [vercel.json](vercel.json) 자동 적용
+4. **Environment Variables** 펼치기:
+   - Name: `GEMINI_API_KEY`
+   - Value: `.env.local` 의 키 그대로 붙여넣기
+   - Environments: ✅ Production ✅ Preview ✅ Development
+5. **Deploy** 클릭 → 약 1분 후 `https://<프로젝트명>.vercel.app` 발급
+6. (선택) Google AI Studio에서 키 사용량 모니터링 알람 설정
 
-1. https://app.netlify.com 가입 → "Add new site" → "Import from Git"
-2. 저장소 선택. `netlify.toml` 자동 인식
-3. **Site settings → Environment variables** 에 `GEMINI_API_KEY` 추가
-4. Deploy → `https://<random>.netlify.app` 발급
-5. 보안조치 A 적용
-
----
-
-## 옵션 3. Cloudflare Tunnel (임시 공개 URL — 5분 테스트용)
-
-cloudflared를 설치하면 회원가입/배포 없이 즉시 공개 URL을 얻을 수 있습니다.
+### B. Vercel CLI 직접 배포
 
 ```cmd
-:: cloudflared 설치 (winget)
+cd "C:\Users\pendo\Documents\Kpop event scrapper"
+npm i -g vercel
+vercel login
+vercel env add GEMINI_API_KEY production    :: 키 입력
+vercel env add GEMINI_API_KEY preview
+vercel env add GEMINI_API_KEY development
+vercel --prod
+```
+
+---
+
+## 옵션 2. Netlify 배포 (대안)
+
+Netlify는 Vercel과 함수 사양이 다릅니다. 이 프로젝트의 [api/scrape.ts](api/scrape.ts)는 Vercel 형식이라 Netlify에서 동작시키려면 별도 변환이 필요합니다(Netlify Functions로 래핑).
+권장: Vercel 사용. Netlify가 꼭 필요하면 별도 작업으로 변환 가능합니다.
+
+---
+
+## 옵션 3. Cloudflare Tunnel (임시 공개 URL)
+
+현재 PC에서 `npm run dev`로 띄운 서버를 외부에 잠깐 노출시키는 용도.
+
+```cmd
 winget install --id Cloudflare.cloudflared
 
-:: 새 터미널에서 dev 서버 실행
+:: 터미널 A
 cd "C:\Users\pendo\Documents\Kpop event scrapper"
 npm run dev
 
-:: 또 다른 터미널에서 터널 실행
+:: 터미널 B
 cloudflared tunnel --url http://localhost:3000
 ```
-출력 결과 끝쯤에 `https://xxx-xxx-xxx.trycloudflare.com` 주소가 나옵니다 — 이 URL로 외부에서 접속 가능.
-- 터널 종료(Ctrl+C) 시 URL은 사라짐
-- 영구 URL을 원하면 Cloudflare 계정 + Named Tunnel 필요
+출력에 `https://xxx.trycloudflare.com` 임시 URL이 나타납니다.
 
 ---
 
-## 옵션 4. 같은 네트워크에서만 접근 (집/사무실 내부망)
+## 옵션 4. 같은 네트워크에서만 (LAN)
 
-vite는 이미 `0.0.0.0` 에 바인딩됩니다. 같은 와이파이 사용자라면:
+Vite가 `0.0.0.0`에 바인딩됩니다. 같은 와이파이 사용자라면:
 
-1. dev 서버 실행: `npm run dev`
-2. Windows 방화벽에서 3000 포트 인바운드 허용 (관리자 권한 cmd):
-   ```cmd
-   netsh advfirewall firewall add rule name="Kpop Scraper Dev" dir=in action=allow protocol=TCP localport=3000
-   ```
-3. 같은 네트워크 기기에서 `http://192.168.0.67:3000` 접속
+```cmd
+:: 관리자 cmd 한 번
+netsh advfirewall firewall add rule name="Kpop Scraper Dev" dir=in action=allow protocol=TCP localport=3000
 
-⚠️ 이 방식은 인터넷 노출이 아니라 **로컬 네트워크 한정**입니다.
+:: 일반 cmd
+npm run dev
+```
+같은 네트워크에서 `http://192.168.0.67:3000` 접속.
 
 ---
 
-## 추천 흐름
+## 환경변수 정리
 
-1. 먼저 **옵션 4**로 같은 네트워크에서 동작 확인
-2. 외부 공유가 필요하면 **옵션 3** (cloudflared) 으로 단기 테스트
-3. 영구 호스팅 원하면 **옵션 1** (Vercel) — 무조건 보안조치 A 또는 B 함께 적용
+| 변수 | 위치 | 용도 |
+|---|---|---|
+| `GEMINI_API_KEY` | `.env.local` (로컬) | Vite dev 미들웨어가 읽음 |
+| `GEMINI_API_KEY` | Vercel Project Settings | Vercel Function 런타임이 읽음 |
+
+`.env.local`은 `.gitignore`에 의해 git에 절대 올라가지 않습니다.
+
+---
+
+## 동작 검증 체크리스트
+
+- [ ] `npm run dev` → http://localhost:3000 → 자동으로 첫 스캔 → 결과 카드 표시
+- [ ] 브라우저 개발자도구 Network 탭에 `/api/scrape?page=1` 호출 보임
+- [ ] `view-source:` 또는 dist/assets/*.js 검색해도 `AIza` 키와 `GoogleGenAI` 모두 없음
+- [ ] 배포 후 `https://<프로젝트>.vercel.app` 동일하게 동작

@@ -62,18 +62,10 @@ const App: React.FC = () => {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Load API Key from env
-  const apiKey = process.env.API_KEY || '';
-
   const loadEvents = async (isNewScan: boolean = false) => {
-    if (!apiKey) {
-      setError("No API Key found. Please configure the environment variables.");
-      return;
-    }
-    
     setLoading(true);
     setError(null);
-    
+
     const targetPage = isNewScan ? 1 : page + 1;
     if (isNewScan) {
       setPage(1);
@@ -82,8 +74,8 @@ const App: React.FC = () => {
     }
 
     try {
-      // Pass the page number to randomization logic in service
-      const newEvents = await fetchScrapedEvents(apiKey, targetPage);
+      // Calls /api/scrape — Gemini key stays server-side
+      const newEvents = await fetchScrapedEvents(targetPage);
       
       setEvents(prevEvents => {
         const currentEvents = isNewScan ? [] : prevEvents;
