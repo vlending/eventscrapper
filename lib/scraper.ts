@@ -286,28 +286,89 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
       return validated;
 
     } catch (error: any) {
-      // Surface the full structure to server logs — Gemini errors are nested
       console.error(`[scraper] Attempt ${attempt}/${maxAttempts} failed`);
       console.error('  message:', error?.message);
       console.error('  status :', error?.status || error?.code);
-      console.error('  body   :', error?.response?.data || error?.error || error);
-      try {
-        console.error('  stack  :', error?.stack);
-      } catch {}
-      lastError = error;
+
+      const friendly = toFriendlyError(error);
+      lastError = friendly.error;
+
+      // For unrecoverable conditions (quota / auth) STOP RETRYING IMMEDIATELY.
+      // Retrying just burns more quota or stays broken.
+      if (friendly.fatal) {
+        throw friendly.error;
+      }
+
       if (attempt < maxAttempts) {
         await delay(2000 * attempt);
       }
     }
   }
 
-  // Build a string error message even if Gemini returned a nested structure
-  const msg =
-    lastError?.message ||
-    lastError?.error?.message ||
-    (typeof lastError === 'string' ? lastError : null) ||
-    'Gemini scraper failed after all retry attempts';
-  const wrapped = new Error(msg);
-  (wrapped as any).cause = lastError;
-  throw wrapped;
+  throw lastError || new Error('Gemini scraper failed after all retry attempts.');
 };
+
+// Parse Gemini SDK errors into a plain Error with a Korean-friendly message.
+// SDK throws Error whose .message contains a JSON-stringified body like:
+//   {"error":{"code":429,"message":"...","status":"RESOURCE_EXHAUSTED",...}}
+function toFriendlyError(err: any): { error: Error; fatal: boolean } {
+  const rawMsg: string =
+    typeof err?.message === 'string' ? err.message :
+    typeof err === 'string' ? err :
+    '';
+
+  // Extract the embedded JSON if present
+  let parsed: any = null;
+  const firstBrace = rawMsg.indexOf('{');
+  const lastBrace = rawMsg.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      parsed = JSON.parse(rawMsg.slice(firstBrace, lastBrace + 1));
+    } catch {}
+  }
+
+  const inner = parsed?.error || parsed;
+  const code = inner?.code || err?.code || err?.status;
+  const status = inner?.status || '';
+  const innerMsg: string = inner?.message || rawMsg || 'Unknown Gemini error';
+
+  // 429 / RESOURCE_EXHAUSTED — daily free tier quota
+  if (code === 429 || status === 'RESOURCE_EXHAUSTED' || /quota|rate limit/i.test(innerMsg)) {
+    const retryMatch = innerMsg.match(/retry in ([\d.]+)s/i);
+    const retryHint = retryMatch ? ` (약 ${Math.ceil(parseFloat(retryMatch[1]))}초 후 재시도 가능)` : '';
+    return {
+      error: new Error(
+        `Gemini 무료 등급의 하루 요청 한도(20회)를 모두 사용했습니다.${retryHint} ` +
+        `내일 다시 시도하시거나, AI Studio에서 결제를 활성화하면 한도가 풀립니다.`
+      ),
+      fatal: true,
+    };
+  }
+
+  // 401 / 403 / API_KEY_INVALID — bad key
+  if (code === 401 || code === 403 || /api key not valid|permission/i.test(innerMsg)) {
+    return {
+      error: new Error('Gemini API 키가 유효하지 않거나 권한이 없습니다. Vercel 환경변수를 확인해주세요.'),
+      fatal: true,
+    };
+  }
+
+  // 503 / UNAVAILABLE — transient, allow retry
+  if (code === 503 || status === 'UNAVAILABLE' || /unavailable/i.test(innerMsg)) {
+    return {
+      error: new Error('Gemini 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요.'),
+      fatal: false,
+    };
+  }
+
+  // Empty/invalid AI output — allow retry
+  if (/empty|invalid response|no json array|failed to parse/i.test(innerMsg)) {
+    return {
+      error: new Error('AI 응답을 해석할 수 없었습니다. 다시 시도해주세요.'),
+      fatal: false,
+    };
+  }
+
+  // Unknown — surface inner message, allow retry
+  return { error: new Error(innerMsg), fatal: false };
+}

@@ -47,15 +47,48 @@ const matchesTypeFilter = (eventType: string, filter: TypeFilter): boolean => {
   }
 };
 
+const CACHE_KEY = 'kpop-events-cache-v1';
+
+interface CachedState {
+  events: KPopEvent[];
+  page: number;
+  fetchedAt: string;
+}
+
+const loadCache = (): CachedState | null => {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedState;
+    if (!parsed || !Array.isArray(parsed.events)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const saveCache = (state: CachedState) => {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+  } catch {}
+};
+
+const clearCache = () => {
+  try { localStorage.removeItem(CACHE_KEY); } catch {}
+};
+
 const App: React.FC = () => {
-  const [events, setEvents] = useState<KPopEvent[]>([]);
+  const cached = typeof window !== 'undefined' ? loadCache() : null;
+
+  const [events, setEvents] = useState<KPopEvent[]>(cached?.events ?? []);
   const [loading, setLoading] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState<number>(1);
-  
+  const [page, setPage] = useState<number>(cached?.page ?? 1);
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(cached?.fetchedAt ?? null);
+
   // Infinite Scroll State
   const [displayLimit, setDisplayLimit] = useState<number>(12);
   const observerTarget = useRef<HTMLDivElement>(null);
@@ -76,21 +109,21 @@ const App: React.FC = () => {
     try {
       // Calls /api/scrape — Gemini key stays server-side
       const newEvents = await fetchScrapedEvents(targetPage);
-      
-      setEvents(prevEvents => {
-        const currentEvents = isNewScan ? [] : prevEvents;
-        
-        // Robust duplicate checking using Link (preferred) or Title+Store
+
+      const merged = (() => {
+        const currentEvents = isNewScan ? [] : events;
         const existingKeys = new Set(currentEvents.map(e => e.link || `${e.store}-${e.title}`));
-        
         const uniqueNewEvents = newEvents.filter(e => {
-            const key = e.link || `${e.store}-${e.title}`;
-            return !existingKeys.has(key);
+          const key = e.link || `${e.store}-${e.title}`;
+          return !existingKeys.has(key);
         });
-        
-        // Append new events
         return [...currentEvents, ...uniqueNewEvents];
-      });
+      })();
+
+      setEvents(merged);
+      const stamp = new Date().toISOString();
+      setLastFetchedAt(stamp);
+      saveCache({ events: merged, page: targetPage, fetchedAt: stamp });
 
     } catch (err: any) {
       console.error("Full fetch error:", err);
@@ -113,10 +146,12 @@ const App: React.FC = () => {
   };
 
   const handleClear = () => {
-    if (window.confirm("Are you sure you want to clear all events?")) {
+    if (window.confirm("저장된 모든 이벤트를 지울까요? (캐시 포함)")) {
       setEvents([]);
       setDisplayLimit(12);
       setPage(1);
+      setLastFetchedAt(null);
+      clearCache();
     }
   };
 
@@ -137,11 +172,8 @@ const App: React.FC = () => {
     }
   };
 
-  // Initial load
-  useEffect(() => {
-    loadEvents(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // No automatic initial load — every scan consumes Gemini quota,
+  // so we rely on cached results and require the user to click "New Scan".
 
   // Filter logic
   const filteredEvents = useMemo(() => {
@@ -357,8 +389,24 @@ const App: React.FC = () => {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-50 mb-4">
               <Filter className="w-8 h-8 text-gray-300" />
             </div>
-            <h3 className="text-lg font-medium text-gray-900">No events found</h3>
-            <p className="mt-1 text-gray-500">Try adjusting your search or click 'New Scan' to refresh.</p>
+            <h3 className="text-lg font-medium text-gray-900">
+              {events.length === 0 ? '아직 스캔된 이벤트가 없습니다' : '필터에 해당하는 이벤트가 없습니다'}
+            </h3>
+            <p className="mt-1 text-gray-500">
+              {events.length === 0
+                ? '우측 상단 "New Scan" 버튼을 눌러 시작하세요. (Gemini 무료 한도: 하루 20회)'
+                : '검색어 또는 필터를 조정해보세요.'}
+            </p>
+            {events.length === 0 && (
+              <button
+                onClick={handleNewScan}
+                disabled={loading}
+                className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white rounded-full text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                지금 스캔하기
+              </button>
+            )}
           </div>
         )}
 
@@ -445,7 +493,9 @@ const App: React.FC = () => {
           <span>Powered by Gemini 2.5 Flash</span>
         </div>
         <div>
-          Last scan: {new Date().toLocaleTimeString()}
+          {lastFetchedAt
+            ? `Last scan: ${new Date(lastFetchedAt).toLocaleString()}`
+            : '아직 스캔하지 않음'}
         </div>
       </div>
 
