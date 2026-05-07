@@ -98,15 +98,17 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
     "Danal Enter Music (다날엔터)", "Amuse Record (어뮤즈)"
   ];
 
+  // Smaller batches per request to stay under the 60s Vercel timeout.
+  // Page 1 prioritises the biggest stores; later pages rotate through the rest.
   let targetStores: string[] = [];
   if (page === 1) {
-    targetStores = [...majorStores, ...otherStores.slice(0, 4)];
+    targetStores = [...majorStores.slice(0, 5), ...otherStores.slice(0, 2)];
   } else {
-    const chunkSize = 8;
+    const chunkSize = 5;
     const totalOthers = otherStores.length;
     const startIndex = ((page - 2) * chunkSize) % totalOthers;
     targetStores = otherStores.slice(startIndex, startIndex + chunkSize);
-    targetStores.push(...shuffle([...majorStores]).slice(0, 2));
+    targetStores.push(...shuffle([...majorStores]).slice(0, 1));
   }
   const searchFocus = targetStores.join(', ');
 
@@ -171,7 +173,8 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
        - DO NOT spend search effort on images. Prioritize accurate dates/links/titles.
 
     OUTPUT REQUIREMENTS:
-    - Return ALL events you can find in the recency window. Aim for 25 to 50 events.
+    - Return between 10 and 20 events (do not exceed 20 — must respond within 50 seconds).
+    - Prioritize the most imminent application periods first.
     - Sort by application start date ascending.
     - VALID JSON array only. No markdown, no commentary, no trailing text.
 
@@ -191,11 +194,15 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
   `;
 
   let lastError: any;
-  const maxAttempts = 3;
+  // Vercel Hobby caps functions at 60s. Retries are pointless once Gemini
+  // takes >30s, so we run a single attempt with a 50s soft timeout to
+  // produce a clean error before the platform kills the function.
+  const maxAttempts = 1;
+  const SOFT_TIMEOUT_MS = 50_000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await ai.models.generateContent({
+      const generation = ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: prompt,
         config: {
@@ -203,7 +210,14 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
         }
       });
 
-      await delay(500);
+      const timeout = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Gemini 응답이 50초 안에 오지 않았습니다. 잠시 후 다시 시도해주세요.')),
+          SOFT_TIMEOUT_MS
+        )
+      );
+
+      const response = await Promise.race([generation, timeout]) as Awaited<typeof generation>;
 
       const rawText = response.text || "";
       let jsonString = rawText.trim();
