@@ -98,107 +98,62 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
     "Danal Enter Music (다날엔터)", "Amuse Record (어뮤즈)"
   ];
 
-  // Smaller batches per request to stay under the 60s Vercel timeout.
-  // Page 1 prioritises the biggest stores; later pages rotate through the rest.
+  // Smaller batches to stay well under the 60s Vercel timeout.
+  // 4 stores per request is the sweet spot with thinking disabled.
   let targetStores: string[] = [];
   if (page === 1) {
-    targetStores = [...majorStores.slice(0, 5), ...otherStores.slice(0, 2)];
+    targetStores = [...majorStores.slice(0, 4)];
   } else {
-    const chunkSize = 5;
+    const chunkSize = 4;
     const totalOthers = otherStores.length;
     const startIndex = ((page - 2) * chunkSize) % totalOthers;
     targetStores = otherStores.slice(startIndex, startIndex + chunkSize);
-    targetStores.push(...shuffle([...majorStores]).slice(0, 1));
   }
   const searchFocus = targetStores.join(', ');
 
-  const prompt = `
-    You are a specialized K-Pop Album Sales Event Scraper for Korean retailers.
-    Your job is to return ONLY currently-relevant events with verified, accurate data.
-    Accuracy beats quantity — skipping uncertain entries is REQUIRED, not optional.
+  // Compact prompt — short prompts let Gemini start search faster.
+  const prompt = `K-Pop 음반 판매 사이트 이벤트 스크래퍼.
+오늘: ${todayDot}. 신청 기간 또는 이벤트 일자가 ${cutoff} ~ ${todayDot} 이후 60일 이내인 것만 포함.
 
-    ============================================================
-    CURRENT DATE: ${todayDot} (오늘 = ${currentYear}년 ${currentMonth}월)
-    RECENCY WINDOW: Only include events whose application period or event date
-                    falls between ${cutoff} and 60 days after ${todayDot}.
-                    REJECT anything older than ${cutoff} or with stale dates.
-    ============================================================
+대상 스토어 (이번 페이지): ${searchFocus}
 
-    Target event types (한국어 키워드 포함):
-      - 오프라인 팬사인회 (Offline Fansign)
-      - 영상통화 팬사인회 / 영통팬싸 (Video Call Fansign)
-      - 팬미팅 / 팬콘 (Fan Meeting / Fan Concert)
-      - 컴백 쇼케이스 (Comeback Showcase)
-      - 럭키드로우 / 미공포 / 포카이벤트 (Lucky Draw / Photo Card Event)
-      - MD/굿즈 발매 이벤트 (MD/Goods launch event)
-      - 음반 발매 응모 이벤트 (Album release entry events)
+이벤트 종류 (한국어 키워드, 영문 라벨 정확히):
+- 오프라인 팬사인회 → "Offline Fansign"
+- 영상통화 팬사인회 / 영통팬싸 → "Video Call Fansign"
+- 팬미팅 / 팬콘 → "Fan Meeting"
+- 컴백 쇼케이스 → "Comeback Showcase"
+- 럭키드로우 / 미공포 / 포카 → "Lucky Draw"
+- MD/굿즈 → "MD/Goods Event"
+- 포토 이벤트 → "Photo Event"
 
-    Scan Context: Page ${page} (Deep Scan)
-    Target Stores: ${searchFocus}
+google_search 사용. 검색어에 반드시 ${currentYear}년 또는 ${currentYear}.${String(currentMonth).padStart(2,'0')} 포함.
+예: "케이타운포유 팬사인회 ${currentYear}년 ${currentMonth}월", "위버스샵 영통팬싸 ${currentYear}".
 
-    SEARCH STRATEGY (CRITICAL — for recent data):
-    1. Use google_search with date-bounded Korean queries. Examples:
-       - "케이타운포유 팬사인회 ${currentYear}년 ${currentMonth}월"
-       - "위버스샵 영상통화 팬사인회 ${currentYear}"
-       - "위드뮤 팬미팅 ${currentYear}년"
-       - "사운드웨이브 팬싸 ${currentYear}.${String(currentMonth).padStart(2,'0')}"
-       - "메이크스타 ${currentYear} 이벤트"
-    2. ALWAYS include the current year (${currentYear}) and ideally month in the query.
-    3. Prefer search results dated within the last 30 days.
-       If a search hit's snippet shows ${currentYear-1} or earlier with no ${currentYear} reference, IGNORE it.
+규칙:
+- artist/title/store/eventType + (applicationPeriod 또는 eventDate) + link 모두 필수.
+- link는 스토어 실제 도메인의 상세 페이지여야 함. 홈페이지면 제외.
+- 검증 불가하면 항목 생략. 절대 추측·환각 금지.
+- 날짜는 YYYY.MM.DD. 기간은 "YYYY.MM.DD ~ YYYY.MM.DD".
+- thumbnailUrl 은 선택. 빨리 못 찾으면 "" 반환. 이미지 검색에 시간 쓰지 마세요.
 
-    DATA QUALITY RULES (STRICT):
-    A. Every event MUST have artist, title, store, eventType,
-       applicationPeriod OR eventDate within the recency window, and a link.
-    B. If you cannot verify any of the above, OMIT THAT CANDIDATE entirely.
-       NEVER fabricate or hallucinate.
-    C. The 'link' must be on the store's real domain. If only homepage available, OMIT.
-    D. Skip events whose application period clearly ENDED before ${todayDot}
-       unless they are within the last 30 days (mark "Closed").
+상태:
+- Open: 신청 기간이 오늘을 포함
+- Upcoming: 신청 시작이 미래
+- Closed: 신청 기간이 30일 이내에 종료됨
 
-    EVENT TYPE LABEL (use exactly):
-       "Offline Fansign", "Video Call Fansign", "Fan Meeting",
-       "Comeback Showcase", "Lucky Draw", "Photo Event", "MD/Goods Event"
+출력:
+- 5~15개 이벤트. 10개 검증되면 더 찾지 말고 즉시 반환.
+- 신청 시작일 오름차순 정렬.
+- JSON 배열만 출력 (마크다운 없이).
 
-    STATUS:
-       "Open" — application period currently accepting
-       "Upcoming" — application starts in the future
-       "Closed" — application period already ended (within 30 days)
-
-    DATE FORMAT:
-       YYYY.MM.DD. Range: "YYYY.MM.DD ~ YYYY.MM.DD". Use "TBA" only if literally TBA / 추후공지.
-
-    THUMBNAIL (OPTIONAL):
-       - thumbnailUrl is OPTIONAL. If you cannot find a verified poster image quickly, return "".
-       - DO NOT spend search effort on images. Prioritize accurate dates/links/titles.
-
-    OUTPUT REQUIREMENTS:
-    - Return between 10 and 20 events (do not exceed 20 — must respond within 50 seconds).
-    - Prioritize the most imminent application periods first.
-    - Sort by application start date ascending.
-    - VALID JSON array only. No markdown, no commentary, no trailing text.
-
-    JSON Object Structure (per event):
-    - id: string
-    - artist: string
-    - title: string
-    - store: string
-    - eventType: string
-    - applicationPeriod: string
-    - eventDate: string
-    - status: "Open" | "Closed" | "Upcoming"
-    - link: string
-    - thumbnailUrl: string
-
-    Output ONLY the JSON array.
-  `;
+각 객체: { id, artist, title, store, eventType, applicationPeriod, eventDate, status, link, thumbnailUrl }`;
 
   let lastError: any;
-  // Vercel Hobby caps functions at 60s. Retries are pointless once Gemini
-  // takes >30s, so we run a single attempt with a 50s soft timeout to
-  // produce a clean error before the platform kills the function.
+  // Vercel Hobby caps functions at 60s. We run a single attempt with a
+  // 55s soft timeout and Gemini "thinking" disabled (otherwise the model
+  // burns 20-40s reasoning before it even starts the search).
   const maxAttempts = 1;
-  const SOFT_TIMEOUT_MS = 50_000;
+  const SOFT_TIMEOUT_MS = 55_000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -207,12 +162,15 @@ export const runScraper = async (apiKey: string, page: number = 1): Promise<KPop
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
-        }
+          // Disable thinking mode — Search Grounding is the slow part,
+          // we don't need extra latency from chain-of-thought.
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       });
 
       const timeout = new Promise((_, reject) =>
         setTimeout(
-          () => reject(new Error('Gemini 응답이 50초 안에 오지 않았습니다. 잠시 후 다시 시도해주세요.')),
+          () => reject(new Error('Gemini 응답이 55초 안에 오지 않았습니다. 다시 시도하시면 캐시 덕분에 더 빠를 수 있습니다.')),
           SOFT_TIMEOUT_MS
         )
       );
