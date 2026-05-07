@@ -304,15 +304,24 @@ function toFriendlyError(err: any): { error: Error; fatal: boolean } {
   const status = inner?.status || '';
   const innerMsg: string = inner?.message || rawMsg || 'Unknown Gemini error';
 
-  // 429 / RESOURCE_EXHAUSTED — daily free tier quota
+  // 429 / RESOURCE_EXHAUSTED — could be per-minute OR per-day
   if (code === 429 || status === 'RESOURCE_EXHAUSTED' || /quota|rate limit/i.test(innerMsg)) {
+    const isDaily = /free_tier_requests|per_day|daily|generate_content_free_tier/i.test(innerMsg);
+    if (isDaily) {
+      return {
+        error: new Error(
+          'Gemini 무료 등급의 하루 요청 한도(20회)를 모두 사용했습니다. ' +
+          '한도 리셋은 미국 태평양시 자정(한국 시간 오후 4~5시)입니다. ' +
+          '바로 풀려면 AI Studio에서 결제를 활성화하거나 새 프로젝트의 API 키를 사용하세요.'
+        ),
+        fatal: true,
+      };
+    }
+    // Per-minute rate limit — short retry helps
     const retryMatch = innerMsg.match(/retry in ([\d.]+)s/i);
-    const retryHint = retryMatch ? ` (약 ${Math.ceil(parseFloat(retryMatch[1]))}초 후 재시도 가능)` : '';
+    const retryHint = retryMatch ? ` 약 ${Math.ceil(parseFloat(retryMatch[1]))}초 후 다시 시도해주세요.` : '';
     return {
-      error: new Error(
-        `Gemini 무료 등급의 하루 요청 한도(20회)를 모두 사용했습니다.${retryHint} ` +
-        `내일 다시 시도하시거나, AI Studio에서 결제를 활성화하면 한도가 풀립니다.`
-      ),
+      error: new Error('Gemini 분당 요청 한도에 걸렸습니다.' + retryHint),
       fatal: true,
     };
   }
